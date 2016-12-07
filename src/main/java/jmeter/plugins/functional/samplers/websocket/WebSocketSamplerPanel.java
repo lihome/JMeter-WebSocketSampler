@@ -2,7 +2,7 @@
  * To change this template, choose Tools | Templates
  * and open the template in the editor.
  */
-package JMeter.plugins.functional.samplers.websocket;
+package jmeter.plugins.functional.samplers.websocket;
 
 import java.awt.Color;
 import org.apache.jmeter.config.gui.ArgumentsPanel;

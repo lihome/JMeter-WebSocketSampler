@@ -16,10 +16,16 @@ import org.apache.jmeter.samplers.AbstractSampler;
 import org.apache.jmeter.samplers.Entry;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.jmeter.testelement.TestElement;
+import org.apache.jmeter.testelement.ThreadListener;
 import org.apache.jmeter.testelement.property.*;
 import org.apache.jorphan.logging.LoggingManager;
 import org.apache.jorphan.util.JOrphanUtils;
 import org.apache.log.Logger;
+
+
+
+
+
 
 
 
@@ -31,18 +37,22 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.jmeter.testelement.TestStateListener;
+import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
 import org.eclipse.jetty.websocket.client.WebSocketClient;
+import org.quartz.spi.ThreadExecutor;
 
 /**
  *
  * @author Maciej Zaleski
  */
-public class WebSocketSampler extends AbstractSampler implements TestStateListener {
+public class WebSocketSampler extends AbstractSampler implements TestStateListener, ThreadListener {
     public static int DEFAULT_CONNECTION_TIMEOUT = 20000; //20 sec
     public static int DEFAULT_RESPONSE_TIMEOUT = 20000; //20 sec
     public static int MESSAGE_BACKLOG_COUNT = 3;
@@ -56,8 +66,18 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     private static final String DEFAULT_PROTOCOL = "ws";
     
     private static Map<String, ServiceSocket> connectionList;
+
+    private static HttpClient httpClient = new HttpClient();
     
-    private static ExecutorService executor = Executors.newCachedThreadPool(); 
+    static {
+        httpClient.setExecutor(Executors.newCachedThreadPool());
+        try {
+            
+            httpClient.start();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
 
     public WebSocketSampler() {
         super();
@@ -66,7 +86,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
     private ServiceSocket getConnectionSocket() throws URISyntaxException, Exception {
         URI uri = getUri();
-
+        
         String connectionId = getThreadName() + getConnectionId();
         
         if (isStreamingConnection() && connectionList.containsKey(connectionId)) {
@@ -78,9 +98,10 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         }
         
         //Create WebSocket client
-        SslContextFactory sslContexFactory = new SslContextFactory();
-        sslContexFactory.setTrustAll(isIgnoreSslErrors());
-        WebSocketClient webSocketClient = new WebSocketClient(sslContexFactory, executor);
+//        SslContextFactory sslContexFactory = new SslContextFactory();
+//        sslContexFactory.setTrustAll(isIgnoreSslErrors());
+        
+        WebSocketClient webSocketClient = new WebSocketClient(httpClient);
         
         ServiceSocket socket = new ServiceSocket(this, webSocketClient);
         if (isStreamingConnection()) {
@@ -89,8 +110,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
         //Start WebSocket client thread and upgrage HTTP connection
         webSocketClient.start();
-        ClientUpgradeRequest request = new ClientUpgradeRequest();
-        webSocketClient.connect(socket, uri, request);
+        webSocketClient.connect(socket, uri);
         
         //Get connection timeout or use the default value
         int connectionTimeout;
@@ -501,6 +521,14 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         for (ServiceSocket socket : connectionList.values()) {
             socket.close();
         }
+    }
+
+    @Override
+    public void threadStarted() {
+    }
+
+    @Override
+    public void threadFinished() {
     }
 
 

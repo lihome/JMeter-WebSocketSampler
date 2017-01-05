@@ -10,6 +10,7 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.log.Logger;
 
@@ -19,6 +20,8 @@ import org.apache.jmeter.engine.util.CompoundVariable;
 import org.apache.jorphan.logging.LoggingManager;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.api.StatusCode;
+import org.eclipse.jetty.websocket.api.UpgradeException;
+import org.eclipse.jetty.websocket.api.WebSocketListener;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketClose;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketConnect;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketFrame;
@@ -29,10 +32,9 @@ import org.eclipse.jetty.websocket.client.WebSocketClient;
 
 /**
  *
- * @author Maciej Zaleski
+ * @author lihome
  */
-@WebSocket(maxTextMessageSize = 256 * 1024 * 1024)
-public class ServiceSocket {
+public class ServiceSocket implements WebSocketListener {
 
     protected final WebSocketSampler parent;
     protected WebSocketClient client;
@@ -49,7 +51,7 @@ public class ServiceSocket {
     protected Pattern responseExpression;
     protected Pattern disconnectExpression;
     protected boolean connected = false;
-
+    
     public ServiceSocket(WebSocketSampler parent, WebSocketClient client) {
         this.parent = parent;
         this.client = client;
@@ -62,35 +64,38 @@ public class ServiceSocket {
         logMessage.append(" - Opening new connection\n");
         initializePatterns();
     }
+    
 
-    @OnWebSocketMessage
-    public void onMessage(String msg) {
-        synchronized (parent) {
-            log.debug("Received message: " + msg);
-            String length = " (" + msg.length() + " bytes)";
+
+    @Override
+    public void onWebSocketText(String message) {
+//        synchronized (parent) {
+            log.debug("Received message: " + message);
+            String length = " (" + message.length() + " bytes)";
             logMessage.append(" - Received message #").append(messageCounter).append(length);
-            addResponseMessage("[Message " + (messageCounter++) + "]\n" + msg + "\n\n");
+            addResponseMessage("[Message " + (messageCounter++) + "]\n" + message + "\n\n");
 
-            if (responseExpression == null || responseExpression.matcher(msg).find()) {
+            if (responseExpression == null || responseExpression.matcher(message).find()) {
                 logMessage.append("; matched response pattern").append("\n");
                 closeLatch.countDown();
-            } else if (!disconnectPattern.isEmpty() && disconnectExpression.matcher(msg).find()) {
+            } else if (!disconnectPattern.isEmpty() && disconnectExpression.matcher(message).find()) {
                 logMessage.append("; matched connection close pattern").append("\n");
                 closeLatch.countDown();
                 close(StatusCode.NORMAL, "JMeter closed session.");
             } else {
                 logMessage.append("; didn't match any pattern").append("\n");
             }
-        }
+//        }
     }
+    
 
-    @OnWebSocketFrame
-    public void onFrame(Frame frame) {
-        synchronized (parent) {
-            log.debug("Received frame: " + frame.getPayload() + " " + frame.getType().name());
-            String length = " (" + frame.getPayloadLength() + " bytes)";
+    @Override
+    public void onWebSocketBinary(byte[] payload, int offset, int len) {
+//        synchronized (parent) {
+            log.debug("Received frame: " + payload);
+            String length = " (" + len + " bytes)";
             logMessage.append(" - Received frame #").append(messageCounter).append(length);
-            String frameTxt = new String(frame.getPayload().array());
+            String frameTxt = new String(payload, offset, len);
             addResponseMessage("[Frame " + (messageCounter++) + "]\n" + frameTxt + "\n\n");
 
             if (responseExpression == null || responseExpression.matcher(frameTxt).find()) {
@@ -103,20 +108,24 @@ public class ServiceSocket {
             } else {
                 logMessage.append("; didn't match any pattern").append("\n");
             }
-        }
+//        }
     }
+    
 
-    @OnWebSocketConnect
-    public void onOpen(Session session) {
+    @Override
+    public void onWebSocketConnect(Session session) {
         logMessage.append(" - WebSocket conection has been opened").append("\n");
         log.debug("Connect " + session.isOpen());
         this.session = session;
+        
         connected = true;
         openLatch.countDown();
     }
 
-    @OnWebSocketClose
-    public void onClose(int statusCode, String reason) {
+    
+
+    @Override
+    public void onWebSocketClose(int statusCode, String reason) {
         if (statusCode != 1000) {
             log.error("Disconnect " + statusCode + ": " + reason);
             logMessage.append(" - WebSocket conection closed unexpectedly by the server: [").append(statusCode)
@@ -291,4 +300,19 @@ public class ServiceSocket {
         responeBacklog.add(message);
 
     }
+
+
+
+    @Override
+    public void onWebSocketError(Throwable cause) {
+
+        if (cause instanceof UpgradeException) {
+            UpgradeException ue = (UpgradeException) cause;
+            log.error("getRequestURI - " + ue.getRequestURI());
+            log.error("onWebSocketError UpgradeException - ", ue.getCause());
+        } else {
+            log.error("onWebSocketError - ", cause);
+        }
+    }
+
 }
